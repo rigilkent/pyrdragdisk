@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyrdragdisk"
+version = "0.1.0"
+description = "An analytical model for debris disks originating in a planetesimal belt."
+authors = [
+    { name = "Max Sommer", email = "ms3078@cam.ac.uk" }
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "astropy",
+    "rave",
+    "PyQt5", # this is necessary for rave to work. Seems to be missing in rave dependencies.
+    "mkdocs"
+]
