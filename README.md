@@ -20,10 +20,10 @@ The package allows for the computation of:
 The core of this package is an implementation of the analytical model of 
 [Rigley & Wyatt (2020)](https://doi.org/10.1093/mnras/staa2029)
 which computes the distribution of dust in the debris disk.
-It then combines this disk model with particle [optical properties](https://github.com/rigilkent/optprops) 
+It then combines this disk model with particle [optical properties](https://github.com/rigilkent/astrodust_optprops) 
 to simulate the disk thermal emission.
 Astrophysical scenes of the disk for arbitrary viewing geometries are computed using the
-['rave' package](https://github.com/yinuohan/Rave).
+[`rave` package](https://github.com/yinuohan/Rave).
 
 ## Usage
 
@@ -49,11 +49,11 @@ disk.calculate_surface_brightness(wav=23.0, prtl=prtl)
 
 ## Installation
 
-This package requires the `optprops` package which is currently only available on GitHub. Install dependencies first:
+This package requires the `astrodust_optprops` package which is currently only available on GitHub. Install dependencies first:
 
 ```bash
 # Install optprops dependency
-git clone https://github.com/rigilkent/optprops.git
+git clone https://github.com/rigilkent/astrodust_optprops.git
 cd optprops
 pip install .
 

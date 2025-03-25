@@ -48,13 +48,13 @@ class Particles:
         self._optprops_prtl = optprops_prtl
 
         # Filter and convert diameters from optprops_prtl (µm -> cm)
-        optprops_prtl.diams *= u.um
-        optprops_prtl.diams_blow *= u.um
-        mask_diams = optprops_prtl.diams <= diam_max_cm * u.cm
-        self.diams = optprops_prtl.diams[mask_diams].to(u.cm).value
+        optprops_diams = optprops_prtl.diams * u.um
+        optprops_diams_blow = optprops_prtl.diams_blow * u.um
+        mask_diams = optprops_diams <= diam_max_cm * u.cm
+        self.diams = optprops_diams[mask_diams].to(u.cm).value
         self.diam_max = self.diams[-1]
         self.n_diams = len(self.diams)
-        self.diams_blow = optprops_prtl.diams_blow.to(u.cm).value
+        self.diams_blow = optprops_diams_blow.to(u.cm).value
         self.diam_min = self.diams_blow[1] * diam_min_rel
 
         # Store relevant optical properties
@@ -98,13 +98,12 @@ class Particles:
         """
         self.k_factor = self.k0 * pow(self.diams / self.diams_blow[1], -self.gamma)
 
-    def interpolate_temperatures(self, rbin):
+    def interpolate_temperatures(self, distances):
         """Interpolates temperatures for particles based on radial distances.
 
         Args:
-            rbin: RadialBin object
-                Contains the radial bins where temperatures should be interpolated to.
-                Must have attributes 'num' (number of bins) and 'mids' (bin midpoints).
+            distances: Contains the astocentric distances (in au) where temperatures
+                       should be interpolated to. Must be a 1D array of distances.
 
         Sets:
             self.temps with interpolated temperature array of shape (rbin.num, self.n_diams).
@@ -115,9 +114,9 @@ class Particles:
         """
         dists_optprops = self._optprops_prtl.dists  # au
         temps_optprops = self._optprops_prtl.temps  # n_dists x n_diams
-        temps_new = np.zeros((rbin.num, self.n_diams))
+        temps_new = np.zeros((len(distances), self.n_diams))
         for iD in range(self.n_diams):  # interpolate in log space
-            temps_new[:, iD] = np.interp(np.log10(rbin.mids), np.log10(dists_optprops), np.log10(temps_optprops[:, iD]))
+            temps_new[:, iD] = np.interp(np.log10(distances), np.log10(dists_optprops), np.log10(temps_optprops[:, iD]))
         temps_new = 10**temps_new       # return to lin space
         self.temps = temps_new
  

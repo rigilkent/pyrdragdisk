@@ -36,7 +36,7 @@ class Disk:
         """
         # Initialize required components
         prtl.calculate_k_factor_tcoll()
-        prtl.interpolate_temperatures(rbin)
+        prtl.interpolate_temperatures(rbin.mids)
         prtl.bnus = prtl.calculate_spectral_radiance_bb(prtl.wavs, prtl.temps)
 
         # Calculate belt properties
@@ -51,15 +51,15 @@ class Disk:
 
         # Create and configure disk
         disk = cls()
-        disk.optical_depth(belt, prtl, rbin, dlog=dlog)
-        disk.cross_sect_area(rbin)
+        disk.calculate_optical_depth(belt, prtl, rbin, dlog=dlog)
+        disk.calculate_cross_sect_area(rbin)
 
         rbin.calculate_solid_angle_of_annuli(star.dist_au)
         disk.compute_sed(prtl=prtl, rbin=rbin)
 
         return disk
 
-    def optical_depth(self, belt, prtl, rbin, dlog=False):
+    def calculate_optical_depth(self, belt, prtl, rbin, dlog=False):
         """Calculate the two-dimensional optical depth distribution of the disc.
         Corresponding to Rigley & Wyatt (2020), Eqs. (22) & (23).
 
@@ -99,7 +99,7 @@ class Disk:
         self.tau_Dr = tau_Dr
         self.tau_r = tau_r
 
-    def cross_sect_area(self, rbin):
+    def calculate_cross_sect_area(self, rbin):
         """
         Calculate and set the two-dimensional distribution of cross-sectional area
         in AU^2 for each (D,r) bin. 

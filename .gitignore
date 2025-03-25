@@ -180,6 +180,7 @@ src/pyrdragdisk/tools.py
 src/pyrdragdisk/backup
 tests
 examples/AlphaCen
+examples/ThetaBoo
 examples/Fomalhaut/*.pkl
 examples/Fomalhaut/*.txt
 examples/Fomalhaut/*.png

@@ -1,12 +1,12 @@
 import numpy as np
 import scipy.ndimage
 import rave
-from matplotlib.colors import LogNorm
+import copy
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 from matplotlib.patches import Circle, Rectangle
 import astropy.units as u
 from astropy.nddata import block_reduce
-import copy
 
 class Image:
     """Class representing a 2D image of a debris disk.

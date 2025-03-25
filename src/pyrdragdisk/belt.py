@@ -123,7 +123,7 @@ class Belt:
         # Size distribution in coll regime
         self.alpha = (7 - prtl.a/3) / (2 - prtl.a/3)  # size distribution slope RW20 Eq. (14)
         self.K_norm = Belt.calculate_size_dist_norm(self.alpha, prtl.matrl.density, prtl.diam_max, self.m_dust_g)
-        self.n_D = Belt.calculate_power_law_distribution(prtl.diams, norm_factor=self.K_norm, slope=self.alpha)
+        self.n_D = Belt.calculate_power_law_size_distribution(prtl.diams, norm_factor=self.K_norm, slope=self.alpha)
 
         # Find D_pr, the regime boundary where eta_0 = 1
         self.D_pr = Belt.calculate_turnover_size_sizedist(star.gm_cgs, star.lum_cgs, self.alpha, 
@@ -132,7 +132,7 @@ class Belt:
 
         # Size distribution in pr regime
         self.K_norm_pr = Belt.calculate_size_dist_norm_prdrag(self.K_norm, self.D_pr, self.alpha, prtl.alpha_r)
-        n_D_pr = Belt.calculate_power_law_distribution(prtl.diams, norm_factor=self.K_norm_pr, slope=prtl.alpha_r - 1)
+        n_D_pr = Belt.calculate_power_law_size_distribution(prtl.diams, norm_factor=self.K_norm_pr, slope=prtl.alpha_r - 1)
 
         # Join both regimes
         self.n_D[prtl.diams <= self.D_pr] = n_D_pr[prtl.diams <= self.D_pr]
@@ -211,7 +211,7 @@ class Belt:
              * pow(belt_vel_coll**2/(2*Qa), 1/(3 - a)) * pow(D_pr, 3/(3 - a)))
 
     @staticmethod
-    def calculate_power_law_distribution(diams, norm_factor, slope):
+    def calculate_power_law_size_distribution(diams, norm_factor, slope):
         """Calculates the number of particles at different particle size according to a power law.
         Corresponds to Rigley & Wyatt (2020), Eq. (7) and (15).
 
