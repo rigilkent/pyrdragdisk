@@ -11,18 +11,18 @@ savefig_dict = {'bbox_inches': 'tight', 'pad_inches': 0.1, 'dpi': 300}
 
 
 # -------------- Run optprops to generate optical properties --------------
-# star = opt.Star(name='Fomalhaut', lum_suns=16.6, mass_suns=1.92, temp=8590)
-# matrl = opt.Material(qsil=.4, qice=1.0, mpor=.7)
-# diams = np.logspace(.5, 5, 55)
-# dists = np.logspace(-.5, 2.5, 67)
-# wavs = np.logspace(.5, 4, 195)
-# prtl = opt.Particles(diams=diams, wavs=wavs, matrl=matrl, dists=dists, suppress_mie_resonance=True)
-# prtl.calculate_all(star)
-# optmod = opt.OpticalModel(star=star, prtl=prtl)
-# optmod.save(optmod_file)
+star = opt.Star(name='Fomalhaut', lum_suns=16.6, mass_suns=1.92, temp=8590)
+matrl = opt.Material(qsil=.4, qice=1.0, mpor=.7)
+diams = np.logspace(.5, 5, 55)
+dists = np.logspace(-.5, 2.5, 67)
+wavs = np.logspace(.5, 4, 195)
+prtl = opt.Particles(diams=diams, wavs=wavs, matrl=matrl, dists=dists, suppress_mie_resonance=True)
+prtl.calculate_all(star)
+optmod = opt.OpticalModel(star=star, prtl=prtl)
+optmod.save(optmod_file)
 
 # Load star and particle optical properties generated with optprops
-optmod = opt.OpticalModel.load(optmod_file)
+# optmod = opt.OpticalModel.load(optmod_file)
 
 ax = optmod.prtl.plot_Qabs(diams=np.logspace(1, 3, 5))
 ax.figure.savefig(script_dir / 'Qabs.png', **savefig_dict)
