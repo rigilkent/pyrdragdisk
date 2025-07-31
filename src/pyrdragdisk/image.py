@@ -247,7 +247,7 @@ class Image:
             raise ValueError("Star must have an optprops_star to get spectral flux density")
         
         # Get stellar spectral flux density at the specified wavelength
-        stellar_flux_density = star.get_spectral_flux_density(wav, domain='freq', distance=star.dist_pc * u.pc)
+        stellar_flux_density = star.get_spectral_flux_density(wav, to_jy=True, distance=star.dist_pc * u.pc)
         
         # Convert flux density (W/m²/μm) to surface brightness at pixel scale
         # Stellar flux is received as a point source, so we need to convert to surface brightness
