@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import scipy.integrate
 from scipy.interpolate import interp1d
 import astropy.units as u
+import astropy.constants as const
 
 
 class Disk:
@@ -137,6 +138,16 @@ class Disk:
             self.sed_flux[i_w] = np.sum(F_nu)
             self.sed_flux_2d[i_w, :] = F_nu
 
+    def calculate_total_luminosity(self, star, prtl):
+        """Calculate total disk luminosity by integrating SED over all wavelengths"""
+        wavs = prtl.wavs * u.um
+        # freq = const.c / wavs  # frequency in Hz
+        sed_wm2 = (self.sed_flux * const.c / wavs**2).to(u.W / u.m**2 / u.um)
+        # Integrate over wavelengths
+        L_dust = np.trapezoid(sed_wm2, x=wavs) * 4 * np.pi * (star.dist_pc * const.pc)**2
+        return (L_dust / const.L_sun).to(1).value
+        
+    
     def calculate_surface_brightness(self, wav, prtl, interp=True):
         # integrate Qabs * Bnu(T(D,r)) * CSA to get radial flux profiles at wavelength nu in Jy
         # this gives the total flux (Jy) from each radial bin

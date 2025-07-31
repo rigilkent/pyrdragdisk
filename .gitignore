@@ -181,6 +181,13 @@ src/pyrdragdisk/backup
 tests
 examples/AlphaCen
 examples/ThetaBoo
+examples/EpsIndA
 examples/Fomalhaut/*.pkl
 examples/Fomalhaut/*.txt
 examples/Fomalhaut/*.png
+examples/Fomalhaut/fomalhaut_alma*
+examples/Fomalhaut/*.fits
+examples/population
+examples/GammaOph
+
+

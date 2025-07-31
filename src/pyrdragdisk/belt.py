@@ -57,7 +57,7 @@ class Belt:
         """
         return 4 * pi * self.r0_cm**3 * self.dr_r * self.inc_max_rad
 
-    def calculate_properties(self, prtl: 'Particles', star: 'Star'):
+    def calculate_properties(self, prtl, star):
         """Calculate all derived belt properties. This method should be called
         after initialization but before the belt is used to create a disk.
         Usually, this method is called by the factory method Disk.make_disk().
@@ -314,7 +314,7 @@ class Belt:
         Corresponding to Rigley & Wyatt (2020), Eq. (9), (10), and (27).
         """
         if len(self.X_C)==0:
-                belt.calculate_critical_impactor_size(prtl.Q_D)
+                Belt.calculate_critical_impactor_size(prtl.Q_D)
             
         K_norm_over_mass = 6 * (4 - self.alpha) / pi / prtl.matrl.density * pow(prtl.diam_max, self.alpha - 4)
 

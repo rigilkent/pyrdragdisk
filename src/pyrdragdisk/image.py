@@ -27,11 +27,19 @@ class Image:
         self.inclination = 0
         self.scale_height = 0
 
+    @property
+    def pixel_scale(self) -> u.Quantity:
+        """Get the pixel scale in arcseconds per pixel."""
+        if self.extent is None:
+            raise ValueError("Image extent not set")
+        return (2 * max(self.extent) / self.data.shape[0]) * u.arcsec
+
     @classmethod
     def from_disk_surface_brightness_profile(cls, S_r: u.Quantity, r_au: np.ndarray, 
                                           dist_pc: float, scale_height: float,
                                           inclination: float = 0, position_angle: float = 0,
                                           resolution: int = 200, rave_points_per_pixel=50,
+                                          pixel_scale_au=None,
                                           r_mask_au: float = 0) -> 'Image':
         """Create an image from a radial surface brightness profile using RAVE.
 
@@ -56,7 +64,10 @@ class Image:
         # Create bins for RAVE
         r_bounds = np.arange(0, int(resolution/2)+1)
         r_pix = (r_bounds[1:] + r_bounds[:-1]) / 2
-        r_model_au = r_pix / r_pix.max() * r_au.max()
+        if pixel_scale_au is None:
+            r_model_au = r_pix / r_pix.max() * r_au.max()
+        else:
+            r_model_au = r_pix * pixel_scale_au
 
         # Interpolate surface brightness onto RAVE bins (strip units for RAVE)
         S_model = np.zeros_like(r_model_au)
@@ -85,7 +96,7 @@ class Image:
 
         # Store data with units preserved
         img.data = rave_img.image * S_r.unit
-        extent = r_au.max() / dist_pc * (resolution/2 + 0.5)/(resolution/2)
+        extent = r_model_au.max() / dist_pc * (resolution/2 + 0.5)/(resolution/2)
         img.extent = [-extent, extent, -extent, extent]
 
         # Apply position angle rotation if needed (preserve units)
@@ -179,12 +190,12 @@ class Image:
             extend = 'both' if np.max(data_converted.value) > vmax else 'min'
 
         # Configure colorbar
-        cbar = plt.colorbar(img_handle, orientation='vertical', ticklocation='left', 
+        cbar = plt.colorbar(img_handle, orientation='vertical', 
                           shrink=.87, pad=-.1, extend=extend)
         cbar.ax.yaxis.set_ticks_position('left')
-        cbar.ax.yaxis.set_tick_params(color='white')
+        cbar.ax.yaxis.set_tick_params(which='major', colors='white')
+        cbar.ax.yaxis.set_tick_params(which='minor', colors='white', labelleft=False)
         plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white', fontsize=9)
-        
         if cticks:
             cbar.ax.set_yticks(cticks)
             cbar.ax.set_yticklabels([str(x) for x in cticks])
@@ -214,3 +225,66 @@ class Image:
                    fontsize=11, verticalalignment='bottom', horizontalalignment='center')
 
         return ax, img_handle
+    
+    def add_star(self, star, wav: float) -> 'Image':
+        """Add stellar flux to the central pixel of the image.
+        
+        Args:
+            star: Star instance (pyrdragdisk.Star) containing stellar properties and distance
+            wav (float): Wavelength in microns at which to calculate stellar flux
+            
+        Returns:
+            Image: New image instance with stellar flux added to central pixel
+            
+        Note:
+            The stellar flux is calculated as a point source and added only to the central pixel.
+            The flux is converted to surface brightness units consistent with the image data.
+        """
+        if self.data is None:
+            raise ValueError("No image data to add star to")
+            
+        if not hasattr(star, '_optprops_star') or star._optprops_star is None:
+            raise ValueError("Star must have an optprops_star to get spectral flux density")
+        
+        # Get stellar spectral flux density at the specified wavelength
+        stellar_flux_density = star.get_spectral_flux_density(wav, domain='freq', distance=star.dist_pc * u.pc)
+        
+        # Convert flux density (W/m²/μm) to surface brightness at pixel scale
+        # Stellar flux is received as a point source, so we need to convert to surface brightness
+        pixel_area_sr = self.pixel_scale.to(u.rad)**2  # pixel area in steradians
+        
+        # Convert to surface brightness by dividing by pixel solid angle
+        stellar_surface_brightness = (stellar_flux_density / pixel_area_sr).to(self.data.unit)
+        
+        # Add to central pixel, or pixels if the image has even dimensions
+        ny, nx = self.data.shape
+        cy, cx = (ny - 1) / 2.0, (nx - 1) / 2.0  # exact optical center in pixel coords (centers at integers)
+
+        # Integer neighbors
+        y0, x0 = int(np.floor(cy)), int(np.floor(cx))
+        y1, x1 = min(y0 + 1, ny - 1), min(x0 + 1, nx - 1)
+
+        # Decide by parity of dimensions
+        odd_y = (ny % 2 == 1)
+        odd_x = (nx % 2 == 1)
+
+        if odd_y and odd_x:
+            # Single central pixel
+            self.data[y0, x0] += stellar_surface_brightness
+        elif (not odd_y) and (not odd_x):
+            # Four central pixels, equal quarters
+            w = 0.25
+            self.data[y0, x0] += stellar_surface_brightness * w
+            self.data[y0, x1] += stellar_surface_brightness * w
+            self.data[y1, x0] += stellar_surface_brightness * w
+            self.data[y1, x1] += stellar_surface_brightness * w
+        elif odd_y and (not odd_x):
+            # Two central columns (vertical boundary), split 50/50 on the central row
+            w = 0.5
+            self.data[y0, x0] += stellar_surface_brightness * w
+            self.data[y0, x1] += stellar_surface_brightness * w
+        else:
+            # (not odd_y) and odd_x: two central rows (horizontal boundary), split 50/50 on the central column
+            w = 0.5
+            self.data[y0, x0] += stellar_surface_brightness * w
+            self.data[y1, x0] += stellar_surface_brightness * w

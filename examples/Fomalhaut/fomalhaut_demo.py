@@ -6,7 +6,7 @@ import pyrdragdisk as pyr
 from pathlib import Path
 
 script_dir = Path(__file__).parent
-optmod_file = script_dir / 'fomalhaut_results.pkl'
+optmod_file = script_dir / 'fomalhaut_optmod.pkl'
 savefig_dict = {'bbox_inches': 'tight', 'pad_inches': 0.1, 'dpi': 300}
 
 
