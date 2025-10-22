@@ -131,11 +131,12 @@ class Belt:
                                                           self.inc_max_rad, self.dr_r, self.r0_cm)
 
         # Size distribution in pr regime
-        self.K_norm_pr = Belt.calculate_size_dist_norm_prdrag(self.K_norm, self.D_pr, self.alpha, prtl.alpha_r)
-        n_D_pr = Belt.calculate_power_law_size_distribution(prtl.diams, norm_factor=self.K_norm_pr, slope=prtl.alpha_r - 1)
+        if self.D_pr > 0:
+            self.K_norm_pr = Belt.calculate_size_dist_norm_prdrag(self.K_norm, self.D_pr, self.alpha, prtl.alpha_r)
+            n_D_pr = Belt.calculate_power_law_size_distribution(prtl.diams, norm_factor=self.K_norm_pr, slope=prtl.alpha_r - 1)
 
-        # Join both regimes
-        self.n_D[prtl.diams <= self.D_pr] = n_D_pr[prtl.diams <= self.D_pr]
+            # Join both regimes
+            self.n_D = np.where(prtl.diams <= self.D_pr, n_D_pr, self.n_D)
 
     def calculate_ratio_lifetimes_prdrag_to_coll(self, prtl, star):
         """Calculate and set the ratios of the PR-drag and collisional timescale across both, 
@@ -149,22 +150,28 @@ class Belt:
         self.t_PR = Belt.calculate_lifetime_prdrag(self.r0_cm, star.gm_cgs, prtl.betas)
 
         # Collisional timescales in coll regime
-        t_coll_coll = Belt.calculate_lifetime_collisions(self.K_norm, self.alpha, prtl.diams, self.vol, self.vel_coll, self.X_C)
+        t_coll = Belt.calculate_lifetime_collisions(self.K_norm, self.alpha, prtl.diams, self.vol, self.vel_coll, self.X_C)
         
-        # Collisional timescales in PR regime
-        t_coll_pr = Belt.calculate_lifetime_collisions_prdrag(self.K_norm_pr, prtl.alpha_r, prtl.diams, 
-                                                     self.vol, self.vel_coll, self.X_C)
-        
-        # Find D_pr_eff where the two regimes intersect.
-        # This is equivalent to where X_CD = D_pr, with an extra factor O(1)
-        self.D_pr_eff = Belt.calculate_turnover_size_collisions(self.vel_coll, self.alpha, 
-                                                      prtl.alpha_r, prtl.Qa, prtl.a, self.D_pr)
-        
-        t_coll = np.where(prtl.diams <= self.D_pr_eff,
-                          t_coll_pr,                # PR drag regime
-                          t_coll_coll)              # Collisional regime
+        if self.D_pr > 0:
+            # Collisional timescales in PR regime
+            t_coll_pr = Belt.calculate_lifetime_collisions_prdrag(self.K_norm_pr, prtl.alpha_r, prtl.diams, 
+                                                        self.vol, self.vel_coll, self.X_C)
+            
+            # Find D_pr_eff where the two regimes intersect.
+            # This is equivalent to where X_CD = D_pr, with an extra factor O(1)
+            self.D_pr_eff = Belt.calculate_turnover_size_collisions(self.vel_coll, self.alpha, 
+                                                        prtl.alpha_r, prtl.Qa, prtl.a, self.D_pr)
+            
+            # Join both regimes
+            t_coll = np.where(prtl.diams <= self.D_pr_eff,
+                              t_coll_pr,                # PR drag regime
+                              t_coll)                   # Collisional regime
+        else:
+            self.D_pr_eff = 0        
         
         self.t_coll_k = t_coll * prtl.k_factor      # include fudge factor
+        if any(self.t_coll_k == 0):
+            raise ValueError("Collisional timescale is zero, which is not physically meaningful.")
         self.eta_0 = self.t_PR / self.t_coll_k
 
     @staticmethod

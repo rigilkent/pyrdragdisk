@@ -152,7 +152,10 @@ class Image:
 
     def plot(self, ax=None, cmap='afmhot', vmin=None, vmax=None, 
             axlim_asec=None, r_mask_asec=None, cticks=None,
-            unit: u.Unit = u.MJy/u.sr):
+            contour_levels=[], unit: u.Unit = u.MJy/u.sr,
+            title=None, cbar_label=None, norm=None,
+            compass_size=2.5, show_cbar=True,
+            beam_rad=None) -> tuple:
         """Plot the image with scientific annotations.
         
         Args:
@@ -173,10 +176,17 @@ class Image:
 
         # Convert data to requested unit for display
         data_converted = self.data.to(unit)
+
+        # Retrieve colormap and set NaN color to nan-color
+        cmap = plt.get_cmap(cmap).copy()
+        cmap.set_bad(color='magenta', alpha=0.5)
         
+        if norm is None:
+            norm = LogNorm(vmin=vmin, vmax=vmax, clip=True)
+            
         img_handle = ax.imshow(data_converted.value, extent=self.extent, 
                              origin='lower', cmap=cmap,
-                             norm=LogNorm(vmin=vmin, vmax=vmax, clip=True))
+                             norm=norm)
 
         # Add central mask if requested
         if r_mask_asec:
@@ -184,26 +194,47 @@ class Image:
             ax.add_patch(mask)
 
         # Determine colorbar extend based on data range
-        if vmax is None:
-            extend = 'min'  # Only extend towards vmin if vmax not specified
+        # if vmax is None:
+        #     extend = 'min'  # Only extend towards vmin if vmax not specified
+        # else:
+        #     extend = 'both' if np.max(data_converted.value) > vmax else 'min'
+        if np.nanmin(data_converted.value) < norm.vmin and np.nanmax(data_converted.value) > norm.vmax:
+            extend = 'both'
+        elif np.nanmin(data_converted.value) < norm.vmin:
+            extend = 'min'
+        elif np.nanmax(data_converted.value) > norm.vmax:
+            extend = 'max'
         else:
-            extend = 'both' if np.max(data_converted.value) > vmax else 'min'
+            extend = 'neither'
 
+        # Add contour lines
+        if len(contour_levels) > 0:
+            contour_lines = ax.contour(data_converted.value, levels=contour_levels, 
+                                    origin='lower', extent=self.extent,
+                                    colors='black', alpha=0.5, linewidths=.5)
+            
         # Configure colorbar
-        cbar = plt.colorbar(img_handle, orientation='vertical', 
-                          shrink=.87, pad=-.1, extend=extend)
-        cbar.ax.yaxis.set_ticks_position('left')
-        cbar.ax.yaxis.set_tick_params(which='major', colors='white')
-        cbar.ax.yaxis.set_tick_params(which='minor', colors='white', labelleft=False)
-        plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white', fontsize=9)
-        if cticks:
-            cbar.ax.set_yticks(cticks)
-            cbar.ax.set_yticklabels([str(x) for x in cticks])
+        if show_cbar:
+            cbar = plt.colorbar(img_handle, orientation='vertical', 
+                            shrink=.87, pad=-.08, extend=extend)
+            cbar.ax.yaxis.set_ticks_position('left')
+            cbar.ax.yaxis.set_tick_params(which='major', colors='white')
+            cbar.ax.yaxis.set_tick_params(which='minor', colors='white', labelleft=False)
+            plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white', fontsize=9)
+            if cticks:
+                cbar.ax.set_yticks(cticks)
+                cbar.ax.set_yticklabels([str(x) for x in cticks])
+            
+            cbar.outline.set_edgecolor('white')
+            cbar.outline.set_linewidth(1)
+            if cbar_label == None:
+                cbar.set_label(f'Flux ({unit.to_string()})', color='white', position=(-.4,0), fontsize=10)
+            else:
+                cbar.set_label(cbar_label, color='white', position=(-.4,0), fontsize=10)
+            
+            if len(contour_levels) > 0:
+                cbar.add_lines(contour_lines)
         
-        cbar.outline.set_edgecolor('white')
-        cbar.outline.set_linewidth(1)
-        cbar.set_label(f'Flux ({unit.to_string()})', color='white', position=(-.4,0), fontsize=10)
-
         # Configure axes
         ax.set_xticks([])
         ax.set_yticks([])
@@ -212,42 +243,62 @@ class Image:
             ax.set_ylim(-axlim_asec*.8, axlim_asec*.8)
 
             # Add scale bar
-            ax.add_patch(Rectangle((axlim_asec/4, -axlim_asec*.7), 5.0, .1, color='white'))
-            ax.text(axlim_asec/4 + 2.5, -axlim_asec*.7 + 0.5, '5\"', color='white', 
+            ax.add_patch(Rectangle((axlim_asec/5, -axlim_asec*.7), 5.0, .1, color='white'))
+            ax.text(axlim_asec/5 + 2.5, -axlim_asec*.7 + 0.5, '5\"', color='white', 
                    fontsize=11, verticalalignment='bottom', horizontalalignment='center')
             
             # Add orientation indicators
-            ax.add_patch(Rectangle((-axlim_asec*.5, axlim_asec*.6), -2.5, .06, color='grey'))
-            ax.add_patch(Rectangle((-axlim_asec*.5, axlim_asec*.6), .06, 2.5, color='grey'))
-            ax.text(-axlim_asec*.5 - 2.8, axlim_asec*.6, 'E', color='grey', 
-                   fontsize=11, verticalalignment='center', horizontalalignment='right')
-            ax.text(-axlim_asec*.5, axlim_asec*.6 + 2.7, 'N', color='grey', 
-                   fontsize=11, verticalalignment='bottom', horizontalalignment='center')
+            compass_size = 2.5 * axlim_asec / 20
+            ax.add_patch(Rectangle((-axlim_asec*.45, axlim_asec*.5), -compass_size, .06, color='grey'))
+            ax.add_patch(Rectangle((-axlim_asec*.45, axlim_asec*.5), .06, compass_size, color='grey'))
+            ax.text(-axlim_asec*.45 - compass_size*1.12, axlim_asec*.5, 'E', color='grey', 
+                fontsize=11, verticalalignment='center', horizontalalignment='right')
+            ax.text(-axlim_asec*.45, axlim_asec*.5 + compass_size*1.08, 'N', color='grey', 
+                fontsize=11, verticalalignment='bottom', horizontalalignment='center')
+            
+            # Add beam size indicator if provided
+            if beam_rad is not None:
+                ax.add_patch(Circle((-axlim_asec*.55, -axlim_asec*.67), beam_rad, 
+                                    edgecolor='white', facecolor='none', lw=1))
+                ax.text(-axlim_asec*.55 + beam_rad*2.5, -axlim_asec*.681, 'beam', 
+                        color='silver', fontsize=11, ha='left', va='center')
 
+        # Add title 
+        if title is not None:
+            # ax.text(0.5, 1.0, title,
+            #     color='white', ha='center', va='top', transform=ax.transAxes, fontsize=10
+            # ) # old
+            ax.text(0.5, 0.95, title,
+                color='white', ha='center', va='top', transform=ax.transAxes, fontsize=14
+            )
+        
         return ax, img_handle
     
-    def add_star(self, star, wav: float) -> 'Image':
+    def add_star(self, wav: float, star=None, stellar_flux_density=None) -> 'Image':
         """Add stellar flux to the central pixel of the image.
         
         Args:
-            star: Star instance (pyrdragdisk.Star) containing stellar properties and distance
             wav (float): Wavelength in microns at which to calculate stellar flux
+            star: Star instance (pyrdragdisk.Star) containing stellar properties and distance
+            stellar_flux_density (Quantity, optional): Directly provide stellar spectral flux density (W/m²/μm)
             
         Returns:
             Image: New image instance with stellar flux added to central pixel
             
         Note:
-            The stellar flux is calculated as a point source and added only to the central pixel.
             The flux is converted to surface brightness units consistent with the image data.
         """
         if self.data is None:
             raise ValueError("No image data to add star to")
             
-        if not hasattr(star, '_optprops_star') or star._optprops_star is None:
-            raise ValueError("Star must have an optprops_star to get spectral flux density")
-        
-        # Get stellar spectral flux density at the specified wavelength
-        stellar_flux_density = star.get_spectral_flux_density(wav, to_jy=True, distance=star.dist_pc * u.pc)
+        if star is not None and stellar_flux_density is None:
+            if not hasattr(star, '_optprops_star') or star._optprops_star is None:
+                raise ValueError("Star must have an optprops_star to get spectral flux density")
+            # Get stellar spectral flux density at the specified wavelength
+            stellar_flux_density = star.get_spectral_flux_density(wav, to_jy=True, distance=star.dist_pc * u.pc)
+        elif star is None and stellar_flux_density is None:
+            raise ValueError("Either star or stellar_flux_density must be provided")
+
         
         # Convert flux density (W/m²/μm) to surface brightness at pixel scale
         # Stellar flux is received as a point source, so we need to convert to surface brightness
