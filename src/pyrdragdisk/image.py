@@ -38,9 +38,9 @@ class Image:
     def from_disk_surface_brightness_profile(cls, S_r: u.Quantity, r_au: np.ndarray, 
                                           dist_pc: float, scale_height: float,
                                           inclination: float = 0, position_angle: float = 0,
-                                          resolution: int = 200, rave_points_per_pixel=50,
-                                          pixel_scale_au=None,
-                                          r_mask_au: float = 0) -> 'Image':
+                                          resolution: int = 200, rave_points_per_pixel=10,
+                                          pixel_scale: u.Quantity | None = None,
+                                          fov: u.Quantity | None = None) -> 'Image':
         """Create an image from a radial surface brightness profile using RAVE.
 
         Args:
@@ -50,54 +50,100 @@ class Image:
             scale_height (float): Disk vertical scale height relative to radius
             inclination (float): Disk inclination (degrees)
             position_angle (float): Position angle E of N (degrees)
-            resolution (int): Image size in pixels
+            resolution (int): Image size in pixels (ignored if fov is provided)
+            pixel_scale (Quantity, optional): Pixel scale with unit either arcsec or au (per pixel).
+            fov (Quantity, optional): Desired total field of view (width = height) in arcsec or au.
             r_mask_au (float): Radius to mask in center (au)
 
         Returns:
             Image: New image instance
         """
-        img = cls(resolution=resolution)
+        # --- Early validation and conversion to au ---
+        pxs_au = None    # au per pixel (float)
+        fov_au = None   # total FOV in au (float)
+
+        if pixel_scale is not None:
+            if not isinstance(pixel_scale, u.Quantity):
+                raise TypeError("pixel_scale must be an astropy Quantity")
+            if not (pixel_scale.unit.is_equivalent(u.arcsec) or pixel_scale.unit.is_equivalent(u.au)):
+                raise ValueError("pixel_scale must have units of arcsec or au")
+            if pixel_scale.unit.is_equivalent(u.au):
+                pxs_au = pixel_scale.to_value(u.au)  # au/pixel
+            else:
+                # arcsec/pixel -> au/pixel using small-angle relation (1 arcsec at 1 pc = 1 au)
+                pxs_au = pixel_scale.to_value(u.arcsec) * dist_pc  # au/pixel
+        
+        if fov is not None:
+            if not isinstance(fov, u.Quantity):
+                raise TypeError("fov must be an astropy Quantity")
+            if  not (fov.unit.is_equivalent(u.arcsec) or fov.unit.is_equivalent(u.au)):
+                raise ValueError("fov must have units of arcsec or au")            
+            if pixel_scale is None:
+                raise TypeError("pixel_scale is required when fov is provided")
+            if fov.unit.is_equivalent(u.au):
+                fov_au = fov.to_value(u.au)
+            else:
+                fov_au = fov.to_value(u.arcsec) * dist_pc  # au
+            
+            dim = int(np.round(fov_au / pxs_au))
+            if dim < 1:
+                raise ValueError("Computed image dimension from fov/pixel_scale must be >= 1")
+            elif np.mod(dim, 2) == 1:
+                dim += 1  # make dimension even
+        else:
+            if resolution is None:
+                raise ValueError("Either fov or resolution must be provided")
+            dim = resolution
+            if pixel_scale is None:
+                pxs_au = r_au.max() / (dim / 2)
+            fov_au = dim * pxs_au
+
+        # Instantiate image with the effective resolution
+        img = cls(resolution=dim)
         img.scale_height = scale_height
         img.inclination = inclination
         img.position_angle = position_angle
 
-        # Create bins for RAVE
-        r_bounds = np.arange(0, int(resolution/2)+1)
-        r_pix = (r_bounds[1:] + r_bounds[:-1]) / 2
-        if pixel_scale_au is None:
-            r_model_au = r_pix / r_pix.max() * r_au.max()
-        else:
-            r_model_au = r_pix * pixel_scale_au
+        # Generate RAVE binning
+        has_model_flux = S_r.value > 0
+        within_fov = r_au / np.sin(np.deg2rad(inclination)) < fov_au / 2
+        n_rbin_rave = int(np.floor(r_au[has_model_flux & within_fov].max() / pxs_au))
+        n_rbin_rave = int(np.floor(r_au.max() / pxs_au))
+        if n_rbin_rave < 1:
+            raise ValueError(f"Number of RAVE bins must be > 1 (current: {n_rbin_rave}); "
+                             f"decrease pixel_scale.")
+        elif n_rbin_rave > 2000:
+            raise ValueError(f"Number of RAVE bins must be < 2000 (current: {n_rbin_rave}); "
+                             f"increase pixel_scale.")
+        elif n_rbin_rave > 500:
+            print(f"Warning: Number of RAVE bins is quite large ({n_rbin_rave}); "
+                  f"this may lead to long computation times. Consider increasing pixel_scale.")
+        r_pix_bounds = np.arange(0, n_rbin_rave+1)
+        r_pix_mids = (r_pix_bounds[1:] + r_pix_bounds[:-1]) / 2
+        r_pix_mids_au = r_pix_mids * pxs_au
+        extent_arcsec = (dim / 2 + .5) * (pxs_au / dist_pc)
 
         # Interpolate surface brightness onto RAVE bins (strip units for RAVE)
-        S_model = np.zeros_like(r_model_au)
-        valid_radii = r_model_au >= r_au[0]
-        S_model[valid_radii] = np.interp(r_model_au[valid_radii], r_au, S_r.value)
+        S_pix = np.zeros_like(r_pix_mids_au)
+        valid_radii = r_pix_mids_au >= r_au[0]
+        S_pix[valid_radii] = np.interp(r_pix_mids_au[valid_radii], r_au, S_r.value)
 
         # Generate RAVE image
         rave_img = rave.MakeImage(
-            r_bounds_make=r_bounds,
-            weights_make=S_model,
-            heights_make=scale_height * r_pix,
+            r_bounds_make=r_pix_bounds,
+            weights_make=S_pix,
+            heights_make=scale_height * r_pix_mids,
             inclination_make=inclination,
-            dim=resolution,
+            dim=dim,
             n_points_per_pixel=rave_points_per_pixel,
             kernel=None,
             rapid=False,
             verbose=False
         )
 
-        # Apply central mask if requested
-        if r_mask_au > 0:
-            r_mask_pix = r_mask_au * resolution/(2 * r_au.max())
-            y, x = np.ogrid[-resolution//2:resolution//2, -resolution//2:resolution//2]
-            mask = x*x + y*y <= r_mask_pix*r_mask_pix
-            rave_img.image[mask] = 0
-
         # Store data with units preserved
         img.data = rave_img.image * S_r.unit
-        extent = r_model_au.max() / dist_pc * (resolution/2 + 0.5)/(resolution/2)
-        img.extent = [-extent, extent, -extent, extent]
+        img.extent = [-extent_arcsec, extent_arcsec, -extent_arcsec, extent_arcsec]
 
         # Apply position angle rotation if needed (preserve units)
         if position_angle != 90:
@@ -174,6 +220,8 @@ class Image:
         if ax is None:
             _, ax = plt.subplots()
 
+        ax.set_facecolor('black')
+
         # Convert data to requested unit for display
         data_converted = self.data.to(unit)
 
@@ -238,30 +286,32 @@ class Image:
         # Configure axes
         ax.set_xticks([])
         ax.set_yticks([])
-        if axlim_asec:
-            ax.set_xlim(-axlim_asec*.7, axlim_asec*.9)
-            ax.set_ylim(-axlim_asec*.8, axlim_asec*.8)
+        if axlim_asec is None:
+            axlim_asec = max(self.extent)
 
-            # Add scale bar
-            ax.add_patch(Rectangle((axlim_asec/5, -axlim_asec*.7), 5.0, .1, color='white'))
-            ax.text(axlim_asec/5 + 2.5, -axlim_asec*.7 + 0.5, '5\"', color='white', 
-                   fontsize=11, verticalalignment='bottom', horizontalalignment='center')
-            
-            # Add orientation indicators
-            compass_size = 2.5 * axlim_asec / 20
-            ax.add_patch(Rectangle((-axlim_asec*.45, axlim_asec*.5), -compass_size, .06, color='grey'))
-            ax.add_patch(Rectangle((-axlim_asec*.45, axlim_asec*.5), .06, compass_size, color='grey'))
-            ax.text(-axlim_asec*.45 - compass_size*1.12, axlim_asec*.5, 'E', color='grey', 
-                fontsize=11, verticalalignment='center', horizontalalignment='right')
-            ax.text(-axlim_asec*.45, axlim_asec*.5 + compass_size*1.08, 'N', color='grey', 
+        ax.set_xlim(-axlim_asec*.7, axlim_asec*.9)
+        ax.set_ylim(-axlim_asec*.8, axlim_asec*.8)
+
+        # Add scale bar
+        ax.add_patch(Rectangle((axlim_asec/5, -axlim_asec*.7), 5.0, .1, color='white'))
+        ax.text(axlim_asec/5 + 2.5, -axlim_asec*.7 + 0.5, '5\"', color='white', 
                 fontsize=11, verticalalignment='bottom', horizontalalignment='center')
-            
-            # Add beam size indicator if provided
-            if beam_rad is not None:
-                ax.add_patch(Circle((-axlim_asec*.55, -axlim_asec*.67), beam_rad, 
-                                    edgecolor='white', facecolor='none', lw=1))
-                ax.text(-axlim_asec*.55 + beam_rad*2.5, -axlim_asec*.681, 'beam', 
-                        color='silver', fontsize=11, ha='left', va='center')
+        
+        # Add orientation indicators
+        compass_size = 2.5 * axlim_asec / 20
+        ax.add_patch(Rectangle((-axlim_asec*.45, axlim_asec*.5), -compass_size, .06, color='grey'))
+        ax.add_patch(Rectangle((-axlim_asec*.45, axlim_asec*.5), .06, compass_size, color='grey'))
+        ax.text(-axlim_asec*.45 - compass_size*1.12, axlim_asec*.5, 'E', color='grey', 
+            fontsize=11, verticalalignment='center', horizontalalignment='right')
+        ax.text(-axlim_asec*.45, axlim_asec*.5 + compass_size*1.08, 'N', color='grey', 
+            fontsize=11, verticalalignment='bottom', horizontalalignment='center')
+        
+        # Add beam size indicator if provided
+        if beam_rad is not None:
+            ax.add_patch(Circle((-axlim_asec*.55, -axlim_asec*.67), beam_rad, 
+                                edgecolor='white', facecolor='none', lw=1))
+            ax.text(-axlim_asec*.55 + beam_rad*2.5, -axlim_asec*.681, 'beam', 
+                    color='silver', fontsize=11, ha='left', va='center')
 
         # Add title 
         if title is not None:
