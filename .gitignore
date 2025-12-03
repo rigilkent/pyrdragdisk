@@ -178,7 +178,8 @@ cython_debug/
 src/pyrdragdisk/legacy.py
 src/pyrdragdisk/tools.py
 src/pyrdragdisk/backup
-tests
+tests/*.pkl
+tests/*.png
 examples/AlphaCen
 examples/ThetaBoo
 examples/EpsIndA

@@ -4,6 +4,8 @@ import scipy.integrate
 from scipy.interpolate import interp1d
 import astropy.units as u
 import astropy.constants as const
+from .utils import as_value, as_quantity
+
 
 
 class Disk:
@@ -92,13 +94,18 @@ class Disk:
                 tau_Dr[:, ir] = tau_0
 
         # Set tau_Dr to zero for sizes below blowout size
-        tau_Dr = np.where((prtl.diams < prtl.diam_min)[:, np.newaxis], 0, tau_Dr)
+        self.tau_Dr = np.where((prtl.diams < prtl.diam_min)[:, np.newaxis], 0, tau_Dr)
 
-        # Integrate over log bins of D to create 1D (radial) optical depth profile
-        tau_r = scipy.integrate.simpson(tau_Dr, x=np.log10(prtl.diams), axis=0)
-        
-        self.tau_Dr = tau_Dr
-        self.tau_r = tau_r
+        # Compute 1D radial optical depth profile by integrating over size
+        self.integrate_optical_depth_over_size(prtl.diams)
+
+    def integrate_optical_depth_over_size(self, prtl_diams):
+        """Integrate the 2D optical depth distribution over particle size to get 1D radial profile.
+
+        Args:
+            prtl_diams (Quantity): Particle diameters (with units)
+        """
+        self.tau_r = scipy.integrate.simpson(self.tau_Dr, x=np.log10(prtl_diams), axis=0)
 
     def calculate_cross_sect_area(self, rbin):
         """
@@ -283,3 +290,82 @@ class Disk:
         fig.get_layout_engine().set(w_pad=0, h_pad=0, hspace=0, wspace=0)
 
         return fig, (ax1, ax2)
+    
+    def apply_bonsor18_inner_depletion(self, a_pl, M_pl, star, rbin, prtl):
+        """
+        Apply a optical depth depletion interior to a hypothetical planet,
+        as determined by the removal factors from the model of Bonsor et al. (2018),
+        to a given Disk object.
+
+        Args:
+            a_pl (float): The semi-major axis of the planet in AU.
+            M_pl (float): The mass of the planet in solar masses.
+            star (Star): The Star object containing stellar parameters.
+            disk (Disk): The Disk object to which the depletion will be applied.
+        
+        Returns:
+            None: The function modifies the Disk object in place.
+        """
+
+        a_pl = as_quantity(a_pl, u.au, param_name='a_pl')
+        M_pl = as_quantity(M_pl, u.M_sun, param_name='M_pl')
+
+        Ftot, _, _ = Disk.planet_removal_factors_bonsor18(
+            a_pl=a_pl,
+            M_pl=M_pl,
+            M_star=star.mass_suns * u.M_sun,
+            beta=prtl.betas
+        )
+        
+        # Apply optical depth depletion inside planet orbit
+        ir_pl = np.where(rbin.mids > a_pl.value)[0][0]
+        self.tau_Dr[:, :ir_pl] = self.tau_Dr[:, :ir_pl] * (1 - Ftot[:, np.newaxis])
+        
+        # Recalculate disk properties
+        self.integrate_optical_depth_over_size(prtl.diams)
+        self.calculate_cross_sect_area(rbin)
+        self.compute_sed(prtl=prtl, rbin=rbin)
+
+    @staticmethod
+    def planet_removal_factors_bonsor18(a_pl, M_pl, M_star, beta,
+        Kej=5.14e8, alpha_e=2.85, gamma_e=1.0, eta_e=-.93, delta_e=-5/2,
+        Kacc=5350,  alpha_a=1.76, gamma_a=-.28,eta_a=-.95, delta_a=-3/2,
+        eps=.85):
+        """
+        Calculate the planet removal factors based on the model from Bonsor et al. (2018).
+
+        Note the typo Table 1 of the published paper:
+        "Kej" should be 5.14e8 (not 5.14e7; A. Bonsor, priv. comm.)
+
+        Args:
+            a_pl (float): The semi-major axis of the planet in AU.
+            M_pl (float): The mass of the planet in solar masses.
+            M_star (float): The mass of the host star in solar masses.
+            beta (float or array-like): The dust-to-gas ratio. Can be a scalar or array.
+
+        Returns:
+        tuple: A tuple containing the following elements:
+            - Ftot (float or array): The total removal factor.
+            - Fej (float or array): The ejection removal factor.
+            - Facc (float or array): The accretion removal factor.
+        """
+
+        a_pl = as_value(a_pl, u.au, param_name='a_pl')
+        M_pl = as_value(M_pl, u.M_sun, param_name='M_pl')
+        M_star = as_value(M_star, u.M_sun, param_name='M_star')
+        beta = np.asarray(beta)
+
+        # Eq. (17)
+        Racc_dt = Kacc * M_pl**alpha_a * a_pl**gamma_a * M_star**delta_a * beta**eta_a
+
+        # Eq. (20)
+        Rej_dt  = Kej  * M_pl**alpha_e * a_pl**gamma_e * M_star**delta_e * beta**eta_e \
+                - Kacc * M_pl**alpha_a * a_pl**gamma_a * M_star**delta_a * beta**eta_a
+        Rej_dt = np.where(Rej_dt < 0, 0, Rej_dt)
+
+        # Eqs. (21, 22)
+        Ftot = 1 - np.exp( - (Rej_dt + Racc_dt) / (1 + Rej_dt)**eps)
+        Facc = Racc_dt / (Racc_dt + Rej_dt) * Ftot
+        Fej  = Rej_dt  / (Racc_dt + Rej_dt) * Ftot
+        
+        return Ftot, Fej, Facc
