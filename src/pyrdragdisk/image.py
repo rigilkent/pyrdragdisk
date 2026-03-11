@@ -7,6 +7,60 @@ from matplotlib.colors import LogNorm
 from matplotlib.patches import Circle, Rectangle
 import astropy.units as u
 from astropy.nddata import block_reduce
+from scipy.stats import binned_statistic
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class RadialProfile:
+    """Container for radial profile data extracted from a disk image.
+    
+    Attributes:
+        radius: Radial bin centers (in arcsec or au depending on extraction)
+        flux: Median surface brightness per radial bin (same units as image)
+        flux_std: Standard deviation of surface brightness per bin
+        area: Annulus area per bin (in arcsec² or au²)
+        counts: Number of pixels contributing to each bin
+        radius_unit: String describing the radius unit ('arcsec' or 'au')
+    """
+    radius: np.ndarray
+    flux: u.Quantity
+    flux_std: u.Quantity
+    area: np.ndarray
+    counts: np.ndarray
+    radius_unit: str = 'arcsec'
+    
+    def plot(self, ax=None, shade_error=False, **kwargs):
+        """Plot the radial profile with error shading.
+        
+        Args:
+            ax: Matplotlib axes to plot on (creates new if None)
+            shade_error: Whether to shade the error region
+            **kwargs: Additional arguments passed to ax.plot()
+        
+        Returns:
+            matplotlib.axes.Axes: The axes with the plot
+        """
+        if ax is None:
+            _, ax = plt.subplots()
+        
+        color = kwargs.pop('color', 'black')
+        label = kwargs.pop('label', None)
+        
+        ax.loglog(self.radius, self.flux.value, color=color, label=label, **kwargs)
+        
+        # Shade ±1σ region
+        if shade_error:
+            y_low = np.maximum(self.flux.value - self.flux_std.value, 1e-20)
+            y_high = self.flux.value + self.flux_std.value
+            ax.fill_between(self.radius, y_low, y_high, color=color, alpha=0.15, linewidth=0)
+        
+        ax.set_xlabel(f'Radius ({self.radius_unit})')
+        ax.set_ylabel(f'Surface brightness ({self.flux.unit})')
+        
+        return ax
+
 
 class Image:
     """Class representing a 2D image of a debris disk.
@@ -106,9 +160,7 @@ class Image:
 
         # Generate RAVE binning
         has_model_flux = S_r.value > 0
-        within_fov = r_au / np.sin(np.deg2rad(inclination)) < fov_au / 2
-        n_rbin_rave = int(np.floor(r_au[has_model_flux & within_fov].max() / pxs_au))
-        n_rbin_rave = int(np.floor(r_au.max() / pxs_au))
+        n_rbin_rave = int(np.ceil(r_au[has_model_flux].max() / pxs_au))
         if n_rbin_rave < 1:
             raise ValueError(f"Number of RAVE bins must be > 1 (current: {n_rbin_rave}); "
                              f"decrease pixel_scale.")
@@ -389,3 +441,158 @@ class Image:
             w = 0.5
             self.data[y0, x0] += stellar_surface_brightness * w
             self.data[y1, x0] += stellar_surface_brightness * w
+
+    def radial_profile(
+        self,
+        delta_r: float | u.Quantity = 1,
+        r_min: float | u.Quantity = 0,
+        r_max: float | u.Quantity | None = None,
+        inclination: float | None = None,
+        position_angle: float | None = None,
+        centerxy: tuple[float, float] | None = None,
+        distance_pc: float | None = None,
+        statistic: str = 'median',
+        correct_inclination: bool = True,
+    ) -> RadialProfile:
+        """Extract the face-on radial brightness profile from an inclined disk image.
+        
+        Computes the azimuthally averaged radial profile by deprojecting pixel
+        coordinates according to the disk inclination and position angle. No image
+        resampling is performed—only the coordinate grid is transformed.
+        
+        For optically thin disks, the observed surface brightness is enhanced by
+        a factor of 1/cos(i) due to the increased line-of-sight path length through
+        the disk. When `correct_inclination=True` (default), this geometric
+        brightening is removed to recover the intrinsic face-on surface brightness.
+        
+        Args:
+            delta_r: Radial bin width. If float, interpreted as pixels. If Quantity
+                with angular units, converted using the image pixel scale.
+            r_min: Inner radius to exclude from the profile. Same unit logic as delta_r.
+            r_max: Outer radius limit. If None, uses the maximum deprojected radius.
+            inclination: Disk inclination in degrees (0 = face-on). If None, uses
+                self.inclination.
+            position_angle: Position angle of the disk major axis in degrees East of
+                North. If None, uses self.position_angle.
+            centerxy: Tuple (cx, cy) specifying the disk center in pixel coordinates.
+                If None, uses the image center.
+            distance_pc: Distance to the star in parsec. If provided, radii are
+                returned in au instead of arcsec.
+            statistic: Statistic to compute per bin ('median' or 'mean').
+            correct_inclination: If True, divide the observed brightness by 1/cos(i)
+                to recover the intrinsic face-on surface brightness for an optically
+                thin disk. Set to False if the disk is optically thick or if the
+                image has already been corrected.
+        
+        Returns:
+            RadialProfile: Dataclass containing radius, flux, flux_std, area, counts,
+                and radius_unit fields.
+        
+        Example:
+            >>> profile = image.radial_profile(delta_r=0.5 * u.arcsec, r_min=0.2 * u.arcsec)
+            >>> profile.plot()
+        """
+        if self.data is None:
+            raise ValueError("No image data to extract profile from")
+        
+        # Use stored geometry if not overridden
+        inc_deg = inclination if inclination is not None else self.inclination
+        pa_deg = position_angle if position_angle is not None else self.position_angle
+        
+        # Get pixel scale for unit conversions
+        pix_scale = self.pixel_scale  # arcsec/pixel
+        
+        # Convert delta_r and r_min to pixels
+        def to_pixels(val):
+            if isinstance(val, u.Quantity):
+                return (val / pix_scale).to(u.dimensionless_unscaled).value
+            return float(val)
+        
+        delta_r_pix = to_pixels(delta_r)
+        r_min_pix = to_pixels(r_min)
+        r_max_pix = to_pixels(r_max) if r_max is not None else None
+        
+        # Work on a copy to avoid modifying the original
+        im = np.array(self.data.value, copy=True, dtype=float)
+        ny, nx = im.shape
+        
+        # Determine center coordinates
+        if centerxy is not None:
+            cx, cy = centerxy
+        else:
+            cx, cy = (nx - 1) / 2.0, (ny - 1) / 2.0
+        
+        # Build coordinate grid relative to center
+        ycoord = np.arange(ny) - cy
+        xcoord = np.arange(nx) - cx
+        xx, yy = np.meshgrid(xcoord, ycoord)
+        
+        # Mask inner region (in projected coordinates) with NaN
+        rr_proj = np.sqrt(xx**2 + yy**2)
+        im[rr_proj < r_min_pix] = np.nan
+        
+        # Compute deprojected radius in the disk frame (no image resampling)
+        # 1) Rotate coordinate grid so disk major axis aligns with x-axis
+        phi = -np.deg2rad(pa_deg - 90.0)
+        cos_phi, sin_phi = np.cos(phi), np.sin(phi)
+        x_rot = xx * cos_phi - yy * sin_phi
+        y_rot = xx * sin_phi + yy * cos_phi
+        
+        # 2) Stretch the minor axis by 1/cos(i) to deproject
+        cos_inc = np.cos(np.deg2rad(inc_deg))
+        stretch = 1.0 / abs(cos_inc) if cos_inc != 0 else 1.0
+        rr_deproj = np.sqrt(x_rot**2 + (y_rot * stretch)**2)
+        
+        # Flatten arrays and select finite pixels
+        r_flat = rr_deproj.ravel()
+        im_flat = im.ravel()
+        valid = np.isfinite(im_flat)
+        r_flat = r_flat[valid]
+        im_flat = im_flat[valid]
+        
+        # Define radial bins
+        max_r = r_max_pix if r_max_pix is not None else np.max(r_flat)
+        n_bins = int(np.ceil((max_r - r_min_pix) / delta_r_pix))
+        bin_edges = np.linspace(r_min_pix, max_r, n_bins + 1)
+        
+        # Compute statistics per bin
+        stat_func = statistic if statistic in ('median', 'mean') else 'median'
+        flux_vals, _, _ = binned_statistic(r_flat, im_flat, statistic=stat_func, bins=bin_edges)
+        flux_std, _, _ = binned_statistic(r_flat, im_flat, statistic='std', bins=bin_edges)
+        counts, _, _ = binned_statistic(r_flat, np.ones_like(im_flat), statistic='sum', bins=bin_edges)
+        
+        # Apply inclination correction for optically thin disks
+        # The observed surface brightness is enhanced by 1/cos(i) due to increased
+        # line-of-sight path length. Multiply by cos(i) to recover face-on brightness.
+        if correct_inclination and inc_deg != 0:
+            cos_inc = np.cos(np.deg2rad(inc_deg))
+            flux_vals = flux_vals * cos_inc
+            flux_std = flux_std * cos_inc
+        
+        # Bin centers and areas (face-on annulus area: 2π r Δr)
+        r_centers_pix = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        dr_pix = np.diff(bin_edges)
+        area_pix2 = 2 * np.pi * r_centers_pix * dr_pix
+        
+        # Convert radii and areas from pixels to physical units
+        arcsec_per_pix = pix_scale.to(u.arcsec).value
+        r_arcsec = r_centers_pix * arcsec_per_pix
+        area_arcsec2 = area_pix2 * arcsec_per_pix**2
+        
+        if distance_pc is not None:
+            r_out = r_arcsec * distance_pc  # au
+            area_out = area_arcsec2 * distance_pc**2  # au²
+            radius_unit = 'au'
+        else:
+            r_out = r_arcsec
+            area_out = area_arcsec2
+            radius_unit = 'arcsec'
+        
+        return RadialProfile(
+            radius=r_out,
+            flux=flux_vals * self.data.unit,
+            flux_std=flux_std * self.data.unit,
+            area=area_out,
+            counts=counts,
+            radius_unit=radius_unit,
+        )

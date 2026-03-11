@@ -36,8 +36,11 @@ star = pyr.Star(dist_pc=7.7, optprops_star=optmod.star)
 # Create parameter object for the belt
 belt = pyr.Belt(r0_au=120,                      # inner radius (au)
                 dr_r=0.385,                     # width relative to r0
-                inc_max_deg=2,                # max inclination (deg)
-                m_dust_earths=0.015)            # total dust mass (Earth masses)
+                inc_max_deg=1.5,                # max inclination (deg)
+                avg_ecc=0.019,
+                m_dust_earths=0.015,            # total dust mass (Earth masses)
+                # method='Xc_high'
+)
 
 # Create parameter object for radial grid
 rbin = pyr.RadialBins(r_min_au=0.5,                # min radius (au)
@@ -47,7 +50,7 @@ rbin = pyr.RadialBins(r_min_au=0.5,                # min radius (au)
 
 # Create parameter object for the particles
 prtl = pyr.Particles(optprops_prtl=optmod.prtl,     # object holding optical properties (optprops.OpticalModel)
-                     qd_norm_cgs=3e6,               # Strength law scaling parameter (erg/g)
+                     qd_norm_cgs=10**6.5,               # Strength law scaling parameter (erg/g)
                      qd_slope=0.0,                  # Strength law slope parameter
                      diam_max_cm=1)                 # Maximum particle size to consider (cm)
 

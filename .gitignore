@@ -178,6 +178,7 @@ cython_debug/
 src/pyrdragdisk/legacy.py
 src/pyrdragdisk/tools.py
 src/pyrdragdisk/backup
+src/pyrdragdisk/sdb.py
 tests/*.pkl
 tests/*.png
 examples/AlphaCen

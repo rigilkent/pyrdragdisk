@@ -9,7 +9,7 @@ year_seconds = u.yr.to(u.s)
 
 class Belt:
     """Configuration parameters for debris disk belt."""
-    def __init__(self, r0_au, dr_r, inc_max_deg, m_dust_earths, avg_ecc=0):
+    def __init__(self, r0_au, dr_r, inc_max_deg, m_dust_earths, avg_ecc=0, method="approx"):
         # Basic geometric parameters
         self.r0_au = r0_au
         self.r0_cm = (r0_au * u.au).to(u.cm).value
@@ -19,6 +19,7 @@ class Belt:
         self.inc_max_deg = inc_max_deg
         self.inc_max_rad = np.radians(inc_max_deg)
         self.avg_ecc = avg_ecc
+        self.method = method
 
         # Mass parameters
         self.m_dust_earths = m_dust_earths
@@ -150,7 +151,7 @@ class Belt:
         self.t_PR = Belt.calculate_lifetime_prdrag(self.r0_cm, star.gm_cgs, prtl.betas)
 
         # Collisional timescales in coll regime
-        t_coll = Belt.calculate_lifetime_collisions(self.K_norm, self.alpha, prtl.diams, self.vol, self.vel_coll, self.X_C)
+        t_coll = Belt.calculate_lifetime_collisions(self.K_norm, self.alpha, prtl.diams, self.vol, self.vel_coll, self.X_C, method=self.method)
         
         if self.D_pr > 0:
             # Collisional timescales in PR regime
@@ -251,22 +252,41 @@ class Belt:
                 pow(X_C, alpha_r - 2) * pow(diams, alpha_r - 4)) / year_seconds
 
     @staticmethod
-    def calculate_lifetime_collisions(K_norm, alpha, diams, belt_vol, belt_vel_coll, X_C):
+    def calculate_lifetime_collisions(
+        K_norm,
+        alpha,
+        diams,
+        belt_vol,
+        belt_vel_coll,
+        X_C,
+        *,
+        method="approx"   # "approx" or "Xc_high"
+    ):
         """Calculate collisional timescales of dust grains.
-
-        Args:
-            K_norm (float): Size distribution normalization factor
-            alpha (float): Size distribution slope (-)
-            diams (np.ndarray): Particle diameters (cm)
-            belt_vol (float): Belt volume (cm³)
-            belt_vel_coll (float): Collisional velocity (cm/s)
-            X_C (float): Critical impactor size ratio (-)
 
         Returns:
             np.ndarray: Collisional timescales, t_coll (yr)
         """
-        return (4 * (alpha - 1) * belt_vol / (pi * K_norm * belt_vel_coll) *
-            pow(X_C, alpha - 1) * pow(diams, alpha - 3)) / year_seconds
+        diams = np.asarray(diams, dtype=float)
+
+        if method not in ("approx", "Xc_high"):
+            raise ValueError("method must be 'approx' or 'Xc_high'")
+
+        # Common prefactor for timescale when written as t = 1/R
+        t_pref = 4.0 * belt_vol / (pi * K_norm * belt_vel_coll)
+
+        # Rigley & Wyatt 2020 Eq. 8 (small X_C approximation)
+        if method == "approx":
+            t_sec = t_pref * (alpha - 1.0) * (X_C ** (alpha - 1.0)) * (diams ** (alpha - 3.0))
+            return t_sec / year_seconds
+
+        # Lower-limit dominated expression for D_max >> D, without assuming X_C << 1
+        bracket = (1.0 / (alpha - 1.0) +
+                   (2.0 * X_C) / (alpha - 2.0) +
+                   (X_C ** 2) / (alpha - 3.0))
+
+        t_sec = t_pref * (X_C ** (alpha - 1.0)) * (diams ** (alpha - 3.0)) / bracket
+        return t_sec / year_seconds
 
     @staticmethod
     def calculate_lifetime_prdrag(orbit_radius, star_gm_cgs, betas):
